@@ -13,9 +13,12 @@
     "@theatre/studio": "^0.7.2",
     "@types/three": "^0.177.0",
     "three": "^0.177.0",
-    "typescript": "^5.8.3"
+    "three-stdlib": "^2.36.0",
+    "typescript": "^5.8.3",
+    "vite-plugin-lygia-resolver": "^1.4.2"
   },
   "devDependencies": {
-    "vite": "^6.3.5"
+    "vite": "^6.3.5",
+    "vite-plugin-glsl": "^1.4.2"
   }
 }
