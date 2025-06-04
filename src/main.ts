@@ -11,12 +11,14 @@ import {
   WebGLRenderer,
 } from "three";
 import "./style.css";
-import { getProject, types } from "@theatre/core";
+import { getProject, types, val } from "@theatre/core";
 import studio from "@theatre/studio";
 import projectState from "./project-state.json";
 import { OrbitControls } from "three-stdlib";
 import VertexShader from "./shader/blur.vert";
 import FragmentShader from "./shader/blur.frag";
+import { FFmpeg } from "@ffmpeg/ffmpeg";
+import { fetchFile, toBlobURL } from "@ffmpeg/util";
 
 studio.initialize();
 
@@ -101,7 +103,10 @@ const data = [
  * Renderer
  */
 
-const renderer = new WebGLRenderer({ antialias: true });
+const renderer = new WebGLRenderer({
+  antialias: true,
+  preserveDrawingBuffer: true,
+});
 
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -208,8 +213,150 @@ data.forEach((item, i) => {
       uIntensity: types.number(1, { range: [0, 1] }),
     });
     planeObj.onValuesChange((value) => {
-      console.log(value);
       planeShaderMaterial.uniforms.uIntensity.value = value.uIntensity;
     });
+
+    renderer.render(scene, camera);
   });
 });
+
+const ffmpeg = new FFmpeg();
+const baseURL = "https://unpkg.com/@ffmpeg/core-mt@0.12.6/dist/esm";
+
+ffmpeg.on("log", ({ message }) => {
+  console.log(message);
+});
+ffmpeg.on("progress", ({ progress, time }) => {
+  console.log("progress: ", progress, time);
+});
+
+await ffmpeg.load({
+  coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
+  wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
+  workerURL: await toBlobURL(
+    `${baseURL}/ffmpeg-core.worker.js`,
+    "text/javascript"
+  ),
+});
+
+const wait = () =>
+  new Promise((resolve) =>
+    setTimeout(() => {
+      resolve(true);
+    }, 20)
+  );
+
+function captureScreenshot(
+  canvas: HTMLCanvasElement,
+  fileName: string
+): Promise<File> {
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => {
+      const file = new File([blob!], fileName, { type: "image/jpeg" });
+      resolve(file);
+    }, "image/jpeg");
+  });
+}
+
+async function videoExport(
+  frames: File[],
+  fileName: string,
+  framerate: number
+) {
+  try {
+    for (let i = 0; i < frames.length; i++) {
+      const file = frames[i];
+      const name = `${file.name}.${file.type.replace("image/", "")}`;
+      await ffmpeg.writeFile(name, await fetchFile(file));
+    }
+
+    const folder = await ffmpeg.listDir("./");
+    console.log("folder data", folder);
+
+    const framePattern = `frame%0${String(frames.length).length}d.jpeg`;
+
+    await ffmpeg
+      .exec([
+        "-framerate",
+        String(framerate),
+        "-i",
+        framePattern,
+        "-c:v",
+        "libx264",
+        "-an",
+        "-movflags",
+        "faststart",
+        "-pix_fmt",
+        "yuv420p",
+        `${fileName}.mp4`,
+      ])
+      .catch((err) => {
+        if (err.name === "AbortError") {
+          console.log(err.message);
+        }
+      });
+
+    //
+    if (!ffmpeg.loaded) return;
+
+    const data = await ffmpeg.readFile(`${fileName}.mp4`);
+
+    for (let i = 0; i < frames.length; i++) {
+      const file = frames[i];
+      const name = `${file.name}.${file.type.replace("image/", "")}`;
+      await ffmpeg.deleteFile(name);
+    }
+
+    console.log(data);
+    const url = URL.createObjectURL(new Blob([data], { type: "video/mp4" }));
+
+    return url;
+  } catch (error) {
+    console.error(error);
+
+    return "";
+  }
+}
+
+window.render = async () => {
+  let files: File[] = [];
+  const fileName = "test";
+  const canvas = renderer.domElement;
+  const framerate = 120;
+  const totalDurationInSeconds = val(sheet.sequence.pointer.length);
+  const totalFrames = Math.floor(totalDurationInSeconds * framerate);
+  const minNumLegth = String(totalFrames).length;
+  console.log(totalDurationInSeconds);
+  let currentSnapshotFrame = 0;
+
+  sheet.sequence.position = 0;
+
+  for (let index = 0; index < totalFrames; index++) {
+    const progress =
+      currentSnapshotFrame / (totalDurationInSeconds * framerate);
+    const timestamp = currentSnapshotFrame / framerate;
+
+    sheet.sequence.position = timestamp;
+    console.log(timestamp);
+    // await wait();
+    files.push(
+      await captureScreenshot(
+        canvas!,
+        `frame${String(currentSnapshotFrame).padStart(minNumLegth, "0")}`
+      )
+    );
+    // renderer.render(scene, camera);
+    currentSnapshotFrame++;
+  }
+
+  const url = await videoExport(files, fileName, framerate);
+  // const url = URL.createObjectURL(files[4]);
+  console.log(url);
+
+  const aTag = document.createElement("a");
+  aTag.href = url!;
+  aTag.setAttribute("download", "test.mp4");
+  document.body.append(aTag);
+  aTag.click();
+  aTag.remove();
+};

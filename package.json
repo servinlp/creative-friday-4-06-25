@@ -9,6 +9,8 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@ffmpeg/ffmpeg": "^0.12.15",
+    "@ffmpeg/util": "^0.12.2",
     "@theatre/core": "^0.7.2",
     "@theatre/studio": "^0.7.2",
     "@types/three": "^0.177.0",
